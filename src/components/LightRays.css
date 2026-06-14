@@ -1,0 +1,44 @@
+/* Root page */
+.home-page {
+  position: relative;
+  min-height: 100vh;
+  background: #0b0f1a; /* dark base so rays pop */
+}
+
+/* LightRays background */
+.light-rays {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55; /* 🔑 controls visibility */
+}
+
+/* Foreground layer */
+.app-foreground {
+  position: relative;
+  z-index: 2;
+  color: #ffffff;
+}
+
+/* Layout */
+.main-content {
+  display: flex;
+  min-height: calc(100vh - 60px);
+}
+
+/* Sidebar */
+.sidebar {
+  width: 240px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+/* Main content area */
+.content {
+  flex: 1;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+}

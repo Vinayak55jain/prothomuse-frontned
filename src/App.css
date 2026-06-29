@@ -96,13 +96,7 @@
     flex: 1;
   }
   
-  .user {
-    font-size: 0.9rem;
-    padding: 0.35rem 0.9rem;
-    border-radius: 999px;
-    background: rgba(15, 18, 26, 0.9);
-    border: 1px solid var(--border-subtle);
-  }
+  /* user pill & popup styles are in Navbar.css */
 
   .logout-btn {
     font-size: 0.82rem;

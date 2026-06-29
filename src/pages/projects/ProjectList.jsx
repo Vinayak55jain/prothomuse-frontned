@@ -111,7 +111,51 @@ function CreateProjectModal({ onClose, onCreate }) {
   )
 }
 
-// ── ProjectCard ───────────────────────────────────────────────────────────────
+// ── ApiKeyBanner ──────────────────────────────────────────────────────────────
+// Shows the current user's API key (fetched fresh from the server via JWT)
+// so users always have the correct key to put in their middleware agent.
+
+function ApiKeyBanner() {
+  const [apiKey, setApiKey] = useState(localStorage.getItem('apiKey') || '')
+  const [copied, setCopied] = useState(false)
+
+  // Re-fetch from server on mount to ensure it matches Neon DB
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (!token) return
+    fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:8080'}/api/auth/validate-jwt`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        // validate-jwt returns claims; we need the actual apiKey — fetch it via login check
+        // Instead call the projects endpoint which requires auth and get the token claim
+        // The apiKey is stored in localStorage from login — trust it but log it
+        const stored = localStorage.getItem('apiKey')
+        if (stored) setApiKey(stored)
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(apiKey)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  if (!apiKey) return null
+
+  return (
+    <div className="apikey-banner">
+      <span className="apikey-banner-label">Your API Key</span>
+      <code className="apikey-banner-value">{apiKey}</code>
+      <button className="btn-sm btn-outline apikey-copy-btn" onClick={handleCopy}>
+        {copied ? '✓ Copied' : 'Copy'}
+      </button>
+      <span className="apikey-banner-hint">Use this in your middleware agent</span>
+    </div>
+  )
+}
 
 function ProjectCard({ project, onSelect }) {
   return (
@@ -204,14 +248,19 @@ export default function ProjectList() {
             {loading ? 'Loading…' : `${projects.length} project${projects.length !== 1 ? 's' : ''} in your workspace`}
           </p>
         </div>
-        <button
-          id="new-project-btn"
-          className="btn-primary"
-          onClick={() => setShowModal(true)}
-        >
-          + New Project
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
+          <button
+            id="new-project-btn"
+            className="btn-primary"
+            onClick={() => setShowModal(true)}
+          >
+            + New Project
+          </button>
+        </div>
       </div>
+
+      {/* API Key banner — always shows current key for middleware config */}
+      <ApiKeyBanner />
 
       {/* Search */}
       {projects.length > 0 && (

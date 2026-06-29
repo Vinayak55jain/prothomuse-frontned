@@ -32,6 +32,9 @@ export default function Login() {
       if (data.data?.username) {
         localStorage.setItem('username', data.data.username)
       }
+      if (form.email) {
+        localStorage.setItem('email', form.email)
+      }
       
       // Navigate to project selection
       navigate('/projects', { replace: true })

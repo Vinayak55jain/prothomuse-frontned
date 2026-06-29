@@ -9,29 +9,26 @@ const RANGE_OPTIONS = ['5m', '1h', '24h']
 
 export default function Uptime() {
   const projectKey = useStore((s) => s.selectedProject?.projectKey || '')
-  const [summary, setSummary] = useState(null)
-  const [range, setRange] = useState('1h')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [tickSecs, setTickSecs] = useState(0)  // local uptime ticker
+  const [summary, setSummary]   = useState(null)
+  const [range, setRange]       = useState('1h')
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState(null)
+  const [, setTick]             = useState(0)  // just triggers re-render every second
 
-  // ── Fetch from backend ───────────────────────────────────────────────
+  // ── Fetch ────────────────────────────────────────────────────────────
   const fetchUptime = useCallback(async (rangeKey) => {
-    console.log(`[Uptime] ▶ Fetching — range=${rangeKey}`)
+    console.log(`[Uptime] ▶ fetchUptime — range=${rangeKey}`)
     setLoading(true)
     setError(null)
     try {
       const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
-      let limit = 30
-      if (rangeKey === '1h') limit = 360  // up to 360 points (1 per 10s)
-      if (rangeKey === '24h') limit = 1440 // up to 1440 points (1 per min if aggregated, or just grab last 1440)
-
       const res = await fetch(
-        `${API_BASE}/uptime?projectKey=${projectKey}&range=${rangeKey}&history_limit=${limit}`
+        `${API_BASE}/uptime?projectKey=${projectKey}&range=${rangeKey}&history_limit=60`
       )
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
-      console.log('[Uptime] ✅ Response received:', data)
+      console.log(`[Uptime] ✅ Response — historyRows=${data.history?.length ?? 0}  availability=${data.availability_pct}`)
+      console.log('[Uptime] 📦 Full payload:', data)
       setSummary(data)
     } catch (err) {
       console.error('[Uptime] ❌ Fetch error:', err)
@@ -45,79 +42,106 @@ export default function Uptime() {
     fetchUptime(range)
   }, [range, fetchUptime])
 
-  // ── WebSocket live updates ───────────────────────────────────────────
+  // ── WebSocket ────────────────────────────────────────────────────────
   const handleMessage = useCallback((message) => {
     if (message.type === 'system_health') {
-      console.log('[Uptime] 🔄 WebSocket system_health received, re-fetching...')
+      console.log('[Uptime] 🔄 WS system_health received — re-fetching...')
       fetchUptime(range)
     }
   }, [range, fetchUptime])
 
   useSocket(handleMessage)
 
-  // ── Local uptime ticker (increments every second) ────────────────────
+  // ── Uptime ticker — just forces a re-render every second ────────────
   useEffect(() => {
-    const timer = setInterval(() => setTickSecs(prev => prev + 1), 1000)
-    return () => clearInterval(timer)
+    const t = setInterval(() => setTick(p => p + 1), 1000)
+    return () => clearInterval(t)
   }, [])
 
   // ── Derived values ───────────────────────────────────────────────────
-  const latest = summary?.latest ?? null
-  const history = summary?.history ?? []
+  const latest          = summary?.latest          ?? null
+  const history         = summary?.history         ?? []
   const availabilityPct = summary?.availability_pct ?? 100
 
-  const uptimeMs = latest ? latest.uptimeMs + tickSecs * 1000 : 0
+  // Compute uptime from the DB-anchored started_at timestamp.
+  // This means refresh 1000 times — the counter stays correct every time.
+  const startedAtMs = summary?.uptime_started_at ? new Date(summary.uptime_started_at).getTime() : null
+  const uptimeMs    = startedAtMs ? Date.now() - startedAtMs : (latest?.uptimeMs ?? 0)
 
   const formatUptime = (ms) => {
-    const totalSecs = Math.floor(ms / 1000)
-    const days = Math.floor(totalSecs / 86400)
-    const hours = Math.floor((totalSecs % 86400) / 3600)
-    const mins = Math.floor((totalSecs % 3600) / 60)
-    const secs = totalSecs % 60
-    return `${days}d ${hours}h ${mins}m ${secs}s`
+    const s    = Math.floor(ms / 1000)
+    const days = Math.floor(s / 86400)
+    const hrs  = Math.floor((s % 86400) / 3600)
+    const mins = Math.floor((s % 3600) / 60)
+    const secs = s % 60
+    return `${days}d ${hrs}h ${mins}m ${secs}s`
   }
 
-  // Line chart — reverse history so oldest is left
+  // Format a timestamp (ms or s) into a readable time label
+  const formatTimeLabel = (ts) => {
+    // detect seconds vs milliseconds
+    const ms = ts < 1e11 ? ts * 1000 : ts
+    const d  = new Date(ms)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+
+  // ── Line chart data — x = time label, y = value ──────────────────────
   const lineChartData = useMemo(() => {
-    const ordered = [...history].reverse()
-    
-    const formatTime = (ts) => {
-      if (!ts) return ''
-      const d = new Date(ts)
-      if (range === '5m') return d.toLocaleTimeString([], { hour12: false })
-      if (range === '1h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-      return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    if (!history.length) {
+      console.log('[Uptime] ⚠️  No history rows for chart')
+      return []
     }
+
+    console.log(`[Uptime] 📊 Building chart from ${history.length} rows`)
+    console.log('[Uptime] 📊 First row timestamp:', history[0]?.timestamp, '| Last:', history[history.length - 1]?.timestamp)
 
     return [
       {
         id: 'CPU',
         color: '#ff7a1a',
-        data: ordered.map((d) => ({ x: formatTime(d.timestamp || d.createdAt), y: parseFloat(d.cpu.toFixed(1)) })),
+        data: history.map(h => ({
+          x: formatTimeLabel(h.timestamp),
+          y: parseFloat(h.cpu.toFixed(2)),
+        })),
       },
       {
         id: 'Memory',
         color: '#3b82f6',
-        data: ordered.map((d) => ({ x: formatTime(d.timestamp || d.createdAt), y: parseFloat(d.memory.toFixed(1)) })),
+        data: history.map(h => ({
+          x: formatTimeLabel(h.timestamp),
+          y: parseFloat(h.memory.toFixed(2)),
+        })),
       },
       {
         id: 'Disk',
         color: '#a78bfa',
-        data: ordered.map((d) => ({ x: formatTime(d.timestamp || d.createdAt), y: parseFloat(d.disk.toFixed(1)) })),
+        data: history.map(h => ({
+          x: formatTimeLabel(h.timestamp),
+          y: parseFloat(h.disk.toFixed(2)),
+        })),
       },
     ]
-  }, [history, range])
+  }, [history])
 
-  // Pie chart — healthy vs warning share
+  // ── Pie chart data ───────────────────────────────────────────────────
   const pieChartData = useMemo(() => {
-    if (!latest) return []
-    const healthy = availabilityPct
-    const unhealthy = 100 - availabilityPct
+    const healthy   = parseFloat(availabilityPct.toFixed(2))
+    const unhealthy = parseFloat((100 - availabilityPct).toFixed(2))
     return [
-      { id: 'Healthy', label: 'Healthy', value: parseFloat(healthy.toFixed(2)) },
-      { id: 'Warning', label: 'Warning', value: parseFloat(unhealthy.toFixed(2)) },
+      { id: 'Healthy', label: 'Healthy', value: healthy   },
+      { id: 'Warning', label: 'Warning', value: unhealthy },
     ].filter(d => d.value > 0)
-  }, [latest, availabilityPct])
+  }, [availabilityPct])
+
+  // How many x-axis tick labels to show so they don't overlap
+  const tickValues = useMemo(() => {
+    if (!lineChartData.length || !lineChartData[0].data.length) return []
+    const pts   = lineChartData[0].data
+    const every = Math.max(1, Math.floor(pts.length / 8)) // show ~8 labels
+    return pts
+      .filter((_, i) => i % every === 0 || i === pts.length - 1)
+      .map(p => p.x)
+  }, [lineChartData])
 
   return (
     <div className="dashboard">
@@ -150,7 +174,7 @@ export default function Uptime() {
           </select>
 
           {loading && <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Loading...</span>}
-          {error && <span style={{ fontSize: '0.85rem', color: '#ff4d6a' }}>{error}</span>}
+          {error   && <span style={{ fontSize: '0.85rem', color: '#ff4d6a'    }}>{error}</span>}
         </div>
       </div>
 
@@ -185,7 +209,7 @@ export default function Uptime() {
         <div className="metric-value">{latest?.goroutines ?? '—'}</div>
       </div>
 
-      {/* Health Distribution Pie */}
+      {/* Availability Pie */}
       {pieChartData.length > 0 && (
         <div className="chart-container" style={{ gridColumn: 'span 1' }}>
           <div className="chart-title">Availability Distribution</div>
@@ -222,57 +246,104 @@ export default function Uptime() {
         </div>
       )}
 
-      {/* CPU / Memory / Disk Trend */}
-      {lineChartData[0]?.data.length > 0 && (
-        <div className="chart-container">
-          <div className="chart-title">CPU, Memory & Disk Trends (Last {history.length} updates)</div>
+      {/* CPU / Memory / Disk Line Chart */}
+      <div className="chart-container" style={{ gridColumn: lineChartData.length ? 'span 1' : '1 / -1' }}>
+        <div className="chart-title">
+          CPU, Memory & Disk Over Time
+          <span style={{ fontSize: '0.8rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>
+            ({history.length} data points)
+          </span>
+        </div>
+
+        {lineChartData.length > 0 && lineChartData[0].data.length > 0 ? (
           <div style={{ height: '350px', width: '100%' }}>
             <ResponsiveLine
               data={lineChartData}
-              margin={{ top: 10, right: 30, bottom: 80, left: 50 }}
+              margin={{ top: 20, right: 110, bottom: 60, left: 55 }}
               xScale={{ type: 'point' }}
-              yScale={{ type: 'linear', min: 0, max: 100 }}
-              curve="cardinal"
+              yScale={{ type: 'linear', min: 0, max: 100, stacked: false }}
+              curve="monotoneX"
               axisBottom={{
-                tickSize: 5, tickPadding: 5, tickRotation: -45,
-                legend: 'Time', legendOffset: 65, legendPosition: 'middle',
+                tickSize: 5,
+                tickPadding: 5,
+                tickRotation: -35,
+                tickValues: tickValues,
+                legend: 'Time',
+                legendOffset: 55,
+                legendPosition: 'middle',
               }}
               axisLeft={{
-                tickSize: 5, tickPadding: 5, tickRotation: 0,
-                legend: 'Usage %', legendOffset: -40, legendPosition: 'middle',
+                tickSize: 5,
+                tickPadding: 5,
+                tickRotation: 0,
+                legend: 'Usage %',
+                legendOffset: -45,
+                legendPosition: 'middle',
+                format: v => `${v}%`,
               }}
               colors={{ datum: 'color' }}
-              pointSize={5}
+              lineWidth={2}
+              pointSize={3}
               pointColor={{ theme: 'background' }}
-              pointBorderWidth={2}
+              pointBorderWidth={1}
               pointBorderColor={{ from: 'serieColor' }}
+              enableArea={true}
+              areaOpacity={0.07}
               useMesh={true}
+              legends={[
+                {
+                  anchor: 'bottom-right',
+                  direction: 'column',
+                  justify: false,
+                  translateX: 100,
+                  translateY: 0,
+                  itemsSpacing: 0,
+                  itemDirection: 'left-to-right',
+                  itemWidth: 80,
+                  itemHeight: 20,
+                  itemOpacity: 0.85,
+                  symbolSize: 10,
+                  symbolShape: 'circle',
+                  itemTextColor: 'var(--muted)',
+                  effects: [{ on: 'hover', style: { itemOpacity: 1 } }],
+                },
+              ]}
               tooltip={({ point }) => (
                 <div style={{
                   background: 'var(--bg-elevated)', padding: '10px',
                   borderRadius: '4px', border: '1px solid var(--accent)', color: 'var(--text)',
+                  fontSize: '0.85rem',
                 }}>
-                  <strong>{point.serieId}</strong>: {Number(point.data.y).toFixed(1)}%
+                  <div style={{ marginBottom: '4px', color: 'var(--muted)' }}>{point.data.x}</div>
+                  <strong style={{ color: point.serieColor }}>{point.serieId}</strong>
+                  {': '}{Number(point.data.y).toFixed(1)}%
                 </div>
               )}
               theme={{
                 axis: {
                   domain: { line: { stroke: 'rgba(255,255,255,0.1)' } },
-                  legend: { text: { fill: 'var(--muted)' } },
-                  ticks: { line: { stroke: 'rgba(255,255,255,0.1)' }, text: { fill: 'var(--muted)' } },
+                  legend: { text: { fill: 'var(--muted)', fontSize: 12 } },
+                  ticks: {
+                    line: { stroke: 'rgba(255,255,255,0.1)' },
+                    text: { fill: 'var(--muted)', fontSize: 10 },
+                  },
                 },
-                grid: { line: { stroke: 'rgba(255,255,255,0.05)' } },
+                grid:    { line: { stroke: 'rgba(255,255,255,0.05)' } },
                 tooltip: { container: { background: 'var(--bg-elevated)' } },
               }}
             />
           </div>
-        </div>
-      )}
+        ) : (
+          <div style={{ height: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}>
+            {loading ? 'Loading chart data...' : 'No history data available for this range'}
+          </div>
+        )}
+      </div>
 
       {/* Service Metrics Table */}
       {latest && (
-        <div className="chart-container">
-          <div className="chart-title">Service Metrics</div>
+        <div className="chart-container" style={{ gridColumn: '1 / -1' }}>
+          <div className="chart-title">Current Service Metrics</div>
           <table className="data-table">
             <thead>
               <tr>
@@ -287,30 +358,30 @@ export default function Uptime() {
                   label: 'CPU Usage',
                   value: `${latest.cpu?.toFixed(1)}%`,
                   badge: latest.cpu < 50 ? 'success' : latest.cpu < 75 ? 'warning' : 'error',
-                  text: latest.cpu < 50 ? 'Healthy' : latest.cpu < 75 ? 'Warning' : 'Critical',
+                  text:  latest.cpu < 50 ? 'Healthy'  : latest.cpu < 75 ? 'Warning'  : 'Critical',
                 },
                 {
                   label: 'Memory Usage',
                   value: `${latest.memory?.toFixed(1)}%`,
                   badge: latest.memory < 65 ? 'success' : latest.memory < 85 ? 'warning' : 'error',
-                  text: latest.memory < 65 ? 'Healthy' : latest.memory < 85 ? 'Warning' : 'Critical',
+                  text:  latest.memory < 65 ? 'Healthy'  : latest.memory < 85 ? 'Warning'  : 'Critical',
                 },
                 {
                   label: 'Disk Usage',
                   value: `${latest.disk?.toFixed(1)}%`,
                   badge: latest.disk < 80 ? 'success' : latest.disk < 90 ? 'warning' : 'error',
-                  text: latest.disk < 80 ? 'Healthy' : latest.disk < 90 ? 'Warning' : 'Critical',
+                  text:  latest.disk < 80 ? 'Healthy'  : latest.disk < 90 ? 'Warning'  : 'Critical',
                 },
                 {
                   label: 'Goroutines',
                   value: latest.goroutines,
                   badge: 'success',
-                  text: 'Running',
+                  text:  'Running',
                 },
               ].map((row, idx) => (
                 <tr key={idx}>
                   <td>{row.label}</td>
-                  <td>{row.value}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{row.value}</td>
                   <td><span className={`status-badge ${row.badge}`}>{row.text}</span></td>
                 </tr>
               ))}

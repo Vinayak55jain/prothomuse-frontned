@@ -20,8 +20,9 @@ export default function Traffic() {
     setLoading(true)
     setError(null)
     try {
+      console.log(projectKey);
       const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
-      const res = await fetch(`${API_BASE}/traffic?projectKey=${projectKey}&range=${rangeKey}&recent_limit=${limit}`)
+       const res = await fetch(`${API_BASE}/traffic?projectKey=${projectKey}&range=${rangeKey}&recent_limit=${limit}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       console.log('[FLOW - Frontend] 6. Traffic.jsx: Received data from backend:', data)

@@ -449,3 +449,49 @@
 .project-card-selectable:hover .project-open-hint {
   opacity: 1;
 }
+
+/* ── API Key Banner ─────────────────────────────────────────────────────────── */
+.apikey-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  background: rgba(255, 122, 26, 0.06);
+  border: 1px solid rgba(255, 122, 26, 0.2);
+  border-radius: 10px;
+  padding: 0.65rem 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.82rem;
+}
+
+.apikey-banner-label {
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.apikey-banner-value {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  background: rgba(0,0,0,0.25);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apikey-copy-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.apikey-banner-hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}

@@ -157,6 +157,15 @@ export default function Overview() {
 
   useEffect(() => { load() }, [load])
 
+  // ── 2-minute auto-refresh ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!projectKey) return
+    const interval = setInterval(() => {
+      load()
+    }, 2 * 60 * 1000) // 2 minutes
+    return () => clearInterval(interval)
+  }, [load, projectKey])
+
   // ── live WebSocket updates ──────────────────────────────────────────────
   const handleMessage = useCallback((msg) => {
     if (msg.type === 'system_health') {

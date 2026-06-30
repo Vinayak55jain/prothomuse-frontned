@@ -49,6 +49,15 @@ export default function Traffic() {
     fetchTraffic(range, recentLimit)
   }, [range, recentLimit, fetchTraffic])
 
+  // ── 2-minute auto-refresh ───────────────────────────────────────────────
+  React.useEffect(() => {
+    if (!projectKey) return
+    const interval = setInterval(() => {
+      fetchTraffic(range, recentLimit)
+    }, 2 * 60 * 1000) // 2 minutes
+    return () => clearInterval(interval)
+  }, [fetchTraffic, range, recentLimit, projectKey])
+
   const handleMessage = useCallback((message) => {
     if (message.type === 'metric') {
       console.log('[FLOW - Frontend] WebSocket metric received, re-fetching traffic data...')

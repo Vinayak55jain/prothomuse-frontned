@@ -49,6 +49,15 @@ export default function Uptime() {
     fetchUptime(range)
   }, [range, fetchUptime])
 
+  // ── 2-minute auto-refresh ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!projectKey) return
+    const interval = setInterval(() => {
+      fetchUptime(range)
+    }, 2 * 60 * 1000) // 2 minutes
+    return () => clearInterval(interval)
+  }, [fetchUptime, range, projectKey])
+
   // ── WebSocket ────────────────────────────────────────────────────────
   const handleMessage = useCallback((message) => {
     if (message.type === 'system_health') {

@@ -10,33 +10,40 @@ const RANGE_OPTIONS = ['5m', '1h', '24h']
 export default function Uptime() {
   const projectKey = useStore((s) => s.selectedProject?.projectKey || '')
   const [summary, setSummary]   = useState(null)
+  const [timeseries, setTimeseries] = useState(null)
   const [range, setRange]       = useState('1h')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
-  const [, setTick]             = useState(0)  // just triggers re-render every second
+  const [, setTick]             = useState(0)
 
   // ── Fetch ────────────────────────────────────────────────────────────
   const fetchUptime = useCallback(async (rangeKey) => {
+    if (!projectKey) return;
     console.log(`[Uptime] ▶ fetchUptime — range=${rangeKey}`)
     setLoading(true)
     setError(null)
     try {
       const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
-      const res = await fetch(
-        `${API_BASE}/uptime?projectKey=${projectKey}&range=${rangeKey}&history_limit=60`
-      )
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      console.log(`[Uptime] ✅ Response — historyRows=${data.history?.length ?? 0}  availability=${data.availability_pct}`)
-      console.log('[Uptime] 📦 Full payload:', data)
+      const [resSummary, resTimeseries] = await Promise.all([
+        fetch(`${API_BASE}/uptime?projectKey=${projectKey}&range=${rangeKey}&history_limit=1`),
+        fetch(`${API_BASE}/uptime/timeseries?projectKey=${projectKey}&range=${rangeKey}`)
+      ])
+      
+      if (!resSummary.ok) throw new Error(`HTTP ${resSummary.status}`)
+      if (!resTimeseries.ok) throw new Error(`HTTP ${resTimeseries.status}`)
+      
+      const data = await resSummary.json()
+      const tsData = await resTimeseries.json()
+      
       setSummary(data)
+      setTimeseries(tsData)
     } catch (err) {
       console.error('[Uptime] ❌ Fetch error:', err)
       setError('Failed to load uptime data')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [projectKey])
 
   useEffect(() => {
     fetchUptime(range)
@@ -87,41 +94,36 @@ export default function Uptime() {
 
   // ── Line chart data — x = time label, y = value ──────────────────────
   const lineChartData = useMemo(() => {
-    if (!history.length) {
-      console.log('[Uptime] ⚠️  No history rows for chart')
-      return []
-    }
-
-    console.log(`[Uptime] 📊 Building chart from ${history.length} rows`)
-    console.log('[Uptime] 📊 First row timestamp:', history[0]?.timestamp, '| Last:', history[history.length - 1]?.timestamp)
+    const buckets = timeseries?.buckets ?? []
+    if (!buckets.length) return []
 
     return [
       {
         id: 'CPU',
         color: '#ff7a1a',
-        data: history.map(h => ({
-          x: formatTimeLabel(h.timestamp),
-          y: parseFloat(h.cpu.toFixed(2)),
+        data: buckets.map(b => ({
+          x: formatTimeLabel(b.timestamp),
+          y: parseFloat(b.avg_cpu.toFixed(2)),
         })),
       },
       {
         id: 'Memory',
         color: '#3b82f6',
-        data: history.map(h => ({
-          x: formatTimeLabel(h.timestamp),
-          y: parseFloat(h.memory.toFixed(2)),
+        data: buckets.map(b => ({
+          x: formatTimeLabel(b.timestamp),
+          y: parseFloat(b.avg_memory.toFixed(2)),
         })),
       },
       {
         id: 'Disk',
         color: '#a78bfa',
-        data: history.map(h => ({
-          x: formatTimeLabel(h.timestamp),
-          y: parseFloat(h.disk.toFixed(2)),
+        data: buckets.map(b => ({
+          x: formatTimeLabel(b.timestamp),
+          y: parseFloat(b.avg_disk.toFixed(2)),
         })),
       },
     ]
-  }, [history])
+  }, [timeseries])
 
   // ── Pie chart data ───────────────────────────────────────────────────
   const pieChartData = useMemo(() => {

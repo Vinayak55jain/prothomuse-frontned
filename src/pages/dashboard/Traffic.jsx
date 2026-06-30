@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo } from 'react'
 import useSocket from '../../hooks/useSocket'
 import { ResponsiveBar } from '@nivo/bar'
 import { ResponsivePie } from '@nivo/pie'
+import { ResponsiveLine } from '@nivo/line'
 import useStore from '../../store/useStore'
 import './Dashboard.css'
 
@@ -11,29 +12,38 @@ const LIMIT_OPTIONS = [10, 20, 50, 100]
 export default function Traffic() {
   const projectKey = useStore((s) => s.selectedProject?.projectKey || '')
   const [summary, setSummary] = useState(null)
+  const [timeseries, setTimeseries] = useState(null)
   const [range, setRange] = useState('1h')
   const [recentLimit, setRecentLimit] = useState(20)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
   const fetchTraffic = useCallback(async (rangeKey, limit) => {
+    if (!projectKey) return;
     setLoading(true)
     setError(null)
     try {
-      console.log(projectKey);
       const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
-       const res = await fetch(`${API_BASE}/traffic?projectKey=${projectKey}&range=${rangeKey}&recent_limit=${limit}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      console.log('[FLOW - Frontend] 6. Traffic.jsx: Received data from backend:', data)
+      const [resSummary, resTimeseries] = await Promise.all([
+        fetch(`${API_BASE}/traffic?projectKey=${projectKey}&range=${rangeKey}&recent_limit=${limit}`),
+        fetch(`${API_BASE}/traffic/timeseries?projectKey=${projectKey}&range=${rangeKey}`)
+      ])
+      
+      if (!resSummary.ok) throw new Error(`HTTP ${resSummary.status}`)
+      if (!resTimeseries.ok) throw new Error(`HTTP ${resTimeseries.status}`)
+      
+      const data = await resSummary.json()
+      const tsData = await resTimeseries.json()
+      
       setSummary(data)
+      setTimeseries(tsData)
     } catch (err) {
       console.error('[Traffic] ❌ Fetch error:', err)
       setError('Failed to load traffic data')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [projectKey])
 
   React.useEffect(() => {
     fetchTraffic(range, recentLimit)
@@ -69,6 +79,43 @@ export default function Traffic() {
   const avgLatency   = summary?.avg_latency     ?? 0
   const maxLatency   = summary?.max_latency     ?? 0
   const minLatency   = summary?.min_latency     ?? 0
+
+  const formatTimeLabel = (ts) => {
+    const ms = ts < 1e11 ? ts * 1000 : ts
+    const d  = new Date(ms)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+
+  const lineChartData = useMemo(() => {
+    const buckets = timeseries?.buckets ?? []
+    if (!buckets.length) return []
+
+    return [
+      {
+        id: 'Requests',
+        color: '#3b82f6',
+        data: buckets.map(b => ({
+          x: formatTimeLabel(b.timestamp),
+          y: b.requests,
+        })),
+      },
+      {
+        id: 'Errors',
+        color: '#ff4d6a',
+        data: buckets.map(b => ({
+          x: formatTimeLabel(b.timestamp),
+          y: b.errors,
+        })),
+      },
+    ]
+  }, [timeseries])
+
+  const tickValues = useMemo(() => {
+    if (!lineChartData.length || !lineChartData[0].data.length) return []
+    const pts   = lineChartData[0].data
+    const every = Math.max(1, Math.floor(pts.length / 8))
+    return pts.filter((_, i) => i % every === 0 || i === pts.length - 1).map(p => p.x)
+  }, [lineChartData])
 
   return (
     <div className="dashboard">
@@ -178,8 +225,101 @@ export default function Traffic() {
           <span className="metric-unit">ms</span>
         </div>
         <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
-          Highest response time
+          Lowest response time
         </div>
+      </div>
+
+      {/* Traffic over time Line Chart */}
+      <div className="chart-container" style={{ gridColumn: lineChartData.length ? 'span 2' : '1 / -1' }}>
+        <div className="chart-title">
+          Traffic Over Time
+          <span style={{ fontSize: '0.8rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>
+            ({timeseries?.buckets?.length ?? 0} data points)
+          </span>
+        </div>
+
+        {lineChartData.length > 0 && lineChartData[0].data.length > 0 ? (
+          <div style={{ height: '350px', width: '100%' }}>
+            <ResponsiveLine
+              data={lineChartData}
+              margin={{ top: 20, right: 110, bottom: 60, left: 55 }}
+              xScale={{ type: 'point' }}
+              yScale={{ type: 'linear', min: 'auto', max: 'auto', stacked: false }}
+              curve="monotoneX"
+              axisBottom={{
+                tickSize: 5,
+                tickPadding: 5,
+                tickRotation: -35,
+                tickValues: tickValues,
+                legend: 'Time',
+                legendOffset: 55,
+                legendPosition: 'middle',
+              }}
+              axisLeft={{
+                tickSize: 5,
+                tickPadding: 5,
+                tickRotation: 0,
+                legend: 'Count',
+                legendOffset: -45,
+                legendPosition: 'middle',
+              }}
+              colors={{ datum: 'color' }}
+              lineWidth={2}
+              pointSize={3}
+              pointColor={{ theme: 'background' }}
+              pointBorderWidth={1}
+              pointBorderColor={{ from: 'serieColor' }}
+              enableArea={true}
+              areaOpacity={0.07}
+              useMesh={true}
+              legends={[
+                {
+                  anchor: 'bottom-right',
+                  direction: 'column',
+                  justify: false,
+                  translateX: 100,
+                  translateY: 0,
+                  itemsSpacing: 0,
+                  itemDirection: 'left-to-right',
+                  itemWidth: 80,
+                  itemHeight: 20,
+                  itemOpacity: 0.85,
+                  symbolSize: 10,
+                  symbolShape: 'circle',
+                  itemTextColor: 'var(--muted)',
+                  effects: [{ on: 'hover', style: { itemOpacity: 1 } }],
+                },
+              ]}
+              tooltip={({ point }) => (
+                <div style={{
+                  background: 'var(--bg-elevated)', padding: '10px',
+                  borderRadius: '4px', border: '1px solid var(--accent)', color: 'var(--text)',
+                  fontSize: '0.85rem',
+                }}>
+                  <div style={{ marginBottom: '4px', color: 'var(--muted)' }}>{point.data.x}</div>
+                  <strong style={{ color: point.serieColor }}>{point.serieId}</strong>
+                  {': '}{point.data.y}
+                </div>
+              )}
+              theme={{
+                axis: {
+                  domain: { line: { stroke: 'rgba(255,255,255,0.1)' } },
+                  legend: { text: { fill: 'var(--muted)', fontSize: 12 } },
+                  ticks: {
+                    line: { stroke: 'rgba(255,255,255,0.1)' },
+                    text: { fill: 'var(--muted)', fontSize: 10 },
+                  },
+                },
+                grid:    { line: { stroke: 'rgba(255,255,255,0.05)' } },
+                tooltip: { container: { background: 'var(--bg-elevated)' } },
+              }}
+            />
+          </div>
+        ) : (
+          <div style={{ height: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}>
+            {loading ? 'Loading chart data...' : 'No history data available for this range'}
+          </div>
+        )}
       </div>
 
       {/* Request Method Distribution Chart */}
